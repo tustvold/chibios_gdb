@@ -10,6 +10,9 @@ class ChibiosPrefixCommand(gdb.Command):
 class ChibiosThread(object):
     """Class to model ChibiOS/RT thread"""
 
+    THREAD_STATE = ["READY", "CURRENT", "SUSPENDED", "WTSEM", "WTMTX", "WTCOND", "SLEEPING",
+  "WTEXIT", "WTOREVT", "WTANDEVT", "SNDMSGQ", "SNDMSG", "WTMSG", "WTQUEUE", "FINAL"]
+
     def __init__(self, thread):
         """ Initialize a Thread object. Will throw exceptions if fields do not exist"""
         self._stklimit = 0
@@ -64,7 +67,7 @@ class ChibiosThread(object):
         if len(thread['p_name'].string()) > 0:
             self._name = thread['p_name'].string()
 
-        self._state = thread['p_state']
+        self._state = int(thread['p_state'])
         self._flags = thread['p_flags']
         self._prio = thread['p_prio']
         self._refs = thread['p_refs']
@@ -130,9 +133,14 @@ class ChibiosThread(object):
 
 
 class ChibiosThreadsCommand(gdb.Command):
-    """Print all the ChibiOS threads and their stack usage.
+"""
+Print all the ChibiOS threads and their stack usage.
 
-    This will not work if ChibiOS was not compiled with... """
+This will not work if ChibiOS was not compiled with, at a minumum,
+CH_USE_REGISTRY. Additionally, CH_DBG_ENABLE_STACK_CHECK and
+CH_DBG_FILL_THREADS are necessary to compute the used/free stack
+for each thread.
+"""
     
     def __init__(self):
         super(ChibiosThreadsCommand, self).__init__("chibios threads",
@@ -149,16 +157,23 @@ class ChibiosThreadsCommand(gdb.Command):
         newer = rlist_as_thread.dereference()['p_newer']
         older = rlist_as_thread.dereference()['p_older']
 
-        print "%-10s %-10s %-10s %6s/%6s  %s" % ("Address", "StkLimit", "Stack", "Free", "Total", "Name")
+        print "%-10s %-10s %-10s %6s/%6s %-16s %s" % ("Address",
+                                                      "StkLimit",
+                                                      "Stack",
+                                                      "Free",
+                                                      "Total",
+                                                      "Name",
+                                                      "State")
         while (newer != rlist_as_thread):
 
             ch_thread = ChibiosThread(newer.dereference())
-            print "0x%08x 0x%08x 0x%08x %6d/%6d  %s" % (ch_thread.address,
-                                                  ch_thread.stack_limit,
-                                                  ch_thread.stack_start,
-                                                  ch_thread.stack_unused,
-                                                  ch_thread.stack_size,
-                                                  ch_thread.name)
+            print "0x%08x 0x%08x 0x%08x %6d/%6d %-16s %s" % (ch_thread.address,
+                                                             ch_thread.stack_limit,
+                                                             ch_thread.stack_start,
+                                                             ch_thread.stack_unused,
+                                                             ch_thread.stack_size,
+                                                             ch_thread.name,
+                                                             ChibiosThread.THREAD_STATE[ch_thread.state])
 
             current = newer
             newer = newer.dereference()['p_newer']
