@@ -115,6 +115,7 @@ class ChibiosThread(object):
         thread_type = gdb.lookup_type('Thread')
 
         # Sanity checks on Thread
+        # From http://stackoverflow.com/questions/1285911/python-how-do-i-check-that-multiple-keys-are-in-a-dict-in-one-go
         if not all(k in thread_type.keys() for k in ("p_newer", "p_older")):
             raise gdb.GdbError("ChibiOS/RT thread registry not enabled, cannot \
             access thread information!")
@@ -172,6 +173,36 @@ class ChibiosThread(object):
         return self._time
 
 
+def chibios_get_threads():
+    """ Create a list of ChibiosThreads for all threads currently in
+    the system
+
+    """
+    # Make sure Thread has enough info to work with
+    ChibiosThread.sanity_check()
+
+    threads = []
+
+    # Walk the thread registry
+    rlist_p = gdb.parse_and_eval('&rlist')
+    rlist_as_thread = rlist_p.cast(gdb.lookup_type('Thread').pointer())
+    newer = rlist_as_thread.dereference()['p_newer']
+    older = rlist_as_thread.dereference()['p_older']
+
+    while (newer != rlist_as_thread):
+        ch_thread = ChibiosThread(newer.dereference())
+        threads.append(ch_thread)
+
+        current = newer
+        newer = newer.dereference()['p_newer']
+        older = newer.dereference()['p_older']
+
+        if (older != current):
+            raise gdb.GdbError('Rlist pointer invalid--corrupt list?')
+
+    return threads
+
+
 class ChibiosThreadsCommand(gdb.Command):
     """Print all the ChibiOS threads and their stack usage.
 
@@ -186,26 +217,12 @@ class ChibiosThreadsCommand(gdb.Command):
                                                     gdb.COMPLETE_NONE)
 
     def invoke(self, args, from_tty):
-        # Make sure Thread has enough info to work with
-        ChibiosThread.sanity_check()
+        threads = chibios_get_threads()
 
-        # Walk the thread registry
-        rlist_p = gdb.parse_and_eval('&rlist')
-        rlist_as_thread = rlist_p.cast(gdb.lookup_type('Thread').pointer())
-        newer = rlist_as_thread.dereference()['p_newer']
-        older = rlist_as_thread.dereference()['p_older']
-
-        print(THREAD_INFO_HEADER)
-        while (newer != rlist_as_thread):
-            ch_thread = ChibiosThread(newer.dereference())
-            print(THREAD_INFO.format(thread=ch_thread))
-
-            current = newer
-            newer = newer.dereference()['p_newer']
-            older = newer.dereference()['p_older']
-
-            if (older != current):
-                raise gdb.GdbError('Rlist pointer invalid--corrupt list?')
+        if threads is not None:
+            print(THREAD_INFO_HEADER)
+            for thread in threads:
+                print(THREAD_INFO.format(thread=thread))
 
 
 class ChibiosThreadCommand(gdb.Command):
@@ -219,14 +236,18 @@ class ChibiosThreadCommand(gdb.Command):
     def invoke(self, args, from_tty):
         thread = gdb.selected_thread()
         if thread is not None:
+            threads = chibios_get_threads()
+
             # inf.ptid is PID, LWID, TID; TID corresponds to the address in
             # memory of the Thread*.
             newer = thread.ptid[2]
-            print(THREAD_INFO_HEADER)
 
-            thread_struct = gdb.parse_and_eval('(Thread *)%d' % (newer))
-            ch_thread = ChibiosThread(thread_struct.dereference())
-            print(THREAD_INFO.format(thread=ch_thread))
+            ch_thread = next((i for i in threads if i.address == newer), None)
+            if ch_thread is not None:
+                print(THREAD_INFO_HEADER)
+                print(THREAD_INFO.format(thread=ch_thread))
+            else:
+                print("Invalid thread")
 
         else:
             print("No threads found--run info threads first")
