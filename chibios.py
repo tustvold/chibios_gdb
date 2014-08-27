@@ -8,9 +8,10 @@ class ChibiosPrefixCommand(gdb.Command):
                                                    True)
 
 class ChibiosThread(object):
-    """ Class to model ChibiOS/RT thread"""
+    """Class to model ChibiOS/RT thread"""
 
     def __init__(self, thread):
+        """ Initialize a Thread object. Will throw exceptions if fields do not exist"""
         self._stklimit = 0
         self._r13 = 0
         self._address = 0
@@ -28,26 +29,37 @@ class ChibiosThread(object):
         void_p = gdb.lookup_type('void').pointer()
 
         # stklimit and r13 are different pointer types, so cast to get the arithmetic correct
-        self._stklimit = thread['p_stklimit'].cast(void_p)
         self._r13 = thread['p_ctx']['r13'].cast(void_p)
-        self._stack_size = self._r13 - self._stklimit
+
+        # p_stklimit is optional.
+        if 'p_stklimit' in thread.type.keys():
+            self._stklimit = thread['p_stklimit'].cast(void_p)
+
+        # only try to dump the stack if we have reasonable confidence that it exists
+        if self._stklimit > 0:
+            self._stack_size = self._r13 - self._stklimit
+            # Try to dump the entire stack of the thread
+            inf = gdb.selected_inferior()
+            
+            try:
+                stack = inf.read_memory(self._stklimit, self._stack_size)
+
+                # Find the first non-'U' (0x55) element in the stack space. 
+                for i, each in enumerate(stack):
+                    if (each != 'U'):
+                        break;
+
+                self._stack_unused = i
+            except gdb.MemoryError:
+                self._stack_unused = 0
+
+        else:
+            self._stack_size = 0
+            self._stack_unused = 0
+
+
         self._address = thread.address
         
-        # Try to dump the entire stack of the thread
-        inf = gdb.selected_inferior()
-            
-        try:
-            stack = inf.read_memory(self._stklimit, self._stack_size)
-        except gdb.MemoryError as e:
-            print e
-            raise gdb.GdbError('Stack pointer invalid?')
-
-        # Find the first non-'U' (0x55) element in the stack space. 
-        for i, each in enumerate(stack):
-            if (each != 'U'):
-                break;
-
-        self._stack_unused = i
     
         if len(thread['p_name'].string()) > 0:
             self._name = thread['p_name'].string()
@@ -56,8 +68,26 @@ class ChibiosThread(object):
         self._flags = thread['p_flags']
         self._prio = thread['p_prio']
         self._refs = thread['p_refs']
-        self._time = thread['p_time']
 
+        # p_time is optional
+        if 'p_time' in thread.type.keys():
+            self._time = thread['p_time']
+
+    @staticmethod
+    def sanity_check():
+        thread_type = gdb.lookup_type('Thread')
+
+        # Sanity checks on Thread
+        if 'p_newer' not in thread_type.keys() or 'p_older' not in thread_type.keys():
+            raise gdb.GdbError("ChibiOS/RT thread registry not enabled, cannot access thread information!")
+            
+        if 'p_stklimit' not in thread_type.keys():
+            print "No p_stklimit in Thread struct; enable CH_DBG_ENABLE_STACK_CHECK"
+
+        if 'p_time' not in thread_type.keys():
+            print "No p_time in Thread struct; enable CH_DBG_THREADS_PROFILING"
+
+        
     @property
     def name(self):
         return self._name
@@ -99,8 +129,6 @@ class ChibiosThread(object):
         return self._time
 
 
-
-
 class ChibiosThreadsCommand(gdb.Command):
     """Print all the ChibiOS threads and their stack usage.
 
@@ -112,9 +140,12 @@ class ChibiosThreadsCommand(gdb.Command):
                                                     gdb.COMPLETE_NONE)
 
     def invoke(self, args, from_tty):
-        thread_type = gdb.lookup_type('Thread')
+        # Make sure Thread has enough info to work with
+        ChibiosThread.sanity_check()
+        
+        # Walk the thread registry
         rlist_p = gdb.parse_and_eval('&rlist')
-        rlist_as_thread = rlist_p.cast(thread_type.pointer())
+        rlist_as_thread = rlist_p.cast(gdb.lookup_type('Thread').pointer())
         newer = rlist_as_thread.dereference()['p_newer']
         older = rlist_as_thread.dereference()['p_older']
 
@@ -122,7 +153,7 @@ class ChibiosThreadsCommand(gdb.Command):
         while (newer != rlist_as_thread):
 
             ch_thread = ChibiosThread(newer.dereference())
-            print "0x%x 0x%x 0x%x %6d/%6d  %s" % (ch_thread.address,
+            print "0x%08x 0x%08x 0x%08x %6d/%6d  %s" % (ch_thread.address,
                                                   ch_thread.stack_limit,
                                                   ch_thread.stack_start,
                                                   ch_thread.stack_unused,
@@ -153,7 +184,13 @@ class ChibiosThreadCommand(gdb.Command):
             print "%-10s %-10s %-10s %6s/%6s  %s" % ("Address", "StkLimit", "Stack", "Free", "Total", "Name")
 
             thread_struct = gdb.parse_and_eval('(Thread *)%d' % (newer)).dereference()
-            print chibios_extract_thread(thread_struct)
+            ch_thread = ChibiosThread(thread_struct)
+            print "0x%08x 0x%08x 0x%08x %6d/%6d  %s" % (ch_thread.address,
+                                                  ch_thread.stack_limit,
+                                                  ch_thread.stack_start,
+                                                  ch_thread.stack_unused,
+                                                  ch_thread.stack_size,
+                                                  ch_thread.name)
 
         else:
             print "No threads found--run info threads first"
