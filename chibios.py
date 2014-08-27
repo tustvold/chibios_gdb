@@ -253,22 +253,74 @@ class ChibiosThreadCommand(gdb.Command):
             print("No threads found--run info threads first")
 
 
-# class ChibiosTraceCommand(gdb.Command):
-#     """ Print the last entries in the trace buffer"""
+class ChibiosTraceCommand(gdb.Command):
+    """ Print the last entries in the trace buffer"""
 
-#     def __init__(self):
-#         super(ChibiosTraceCommand, self).__init__("chibios trace",
-#                                                   gdb.COMMAND_SUPPORT,
-#                                                   gdb.COMPLETE_NONE)
+    def __init__(self):
+        super(ChibiosTraceCommand, self).__init__("chibios trace",
+                                                  gdb.COMMAND_SUPPORT,
+                                                  gdb.COMPLETE_NONE)
 
-#     def invoke(self, args, from_tty):
-#         count = 10
-#         if args is not None:
-#             count = int(args[0])
+    def invoke(self, args, from_tty):
+        # TODO take from args
+        count = 10
 
-#         trace_max = gdb.parse_and_eval(
+        threads = chibios_get_threads()
+
+        dbg_trace_buffer = gdb.parse_and_eval("dbg_trace_buffer")
+
+        trace_buffer_size = int(dbg_trace_buffer['tb_size'])
+
+        trace_buffer = dbg_trace_buffer['tb_buffer']
+
+        current_trace = dbg_trace_buffer['tb_ptr']
+
+        trace_start = int(current_trace.dereference().address -
+                          trace_buffer.dereference().address)
+
+        traces = []
+
+        for i in xrange(trace_start, trace_buffer_size):
+            traces.append(trace_buffer[i])
+
+        for i in xrange(0, trace_start):
+            traces.append(trace_buffer[i])
+
+        print("{:6} {:8} {:10} {:16} {:10} {:16}".format("Event",
+                                                         "Time",
+                                                         "Previous",
+                                                         "Name",
+                                                         "Current",
+                                                         "Name"))
+
+        # Print oldest trace separately since we don't have previous
+        # information
+
+        thread = next((i for i in threads if
+                       i.address == long(traces[0]['se_tp'])), None)
+        if thread is not None:
+            print("{:6} {:8d} {:10} {:16} {:#10x} {:16}".format(-63 + 0,
+                                                             int(traces[0]['se_time']),
+                                                             "",
+                                                             "",
+                                                             thread.address,
+                                                             thread.name))
+
+        for j, event in enumerate(traces[1:], 1):
+            curr_thread = next((i for i in threads if
+                                i.address == long(event['se_tp'])), None)
+            prev_thread = next((i for i in threads if
+                                i.address == long(traces[j - 1]['se_tp'])), None)
+            print("{:6} {:8d} {:#10x} {:16} {:#10x} {:16}".format(-63 + j,
+                                                                int(event['se_time']),
+                                                                prev_thread.address,
+                                                                prev_thread.name,
+                                                                curr_thread.address,
+                                                                curr_thread.name))
+
 
 
 ChibiosPrefixCommand()
 ChibiosThreadsCommand()
 ChibiosThreadCommand()
+ChibiosTraceCommand()
