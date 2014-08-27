@@ -261,15 +261,40 @@ class ChibiosTraceCommand(gdb.Command):
                                                   gdb.COMMAND_SUPPORT,
                                                   gdb.COMPLETE_NONE)
 
+    def trace_line(self, index, time, state, prev_thread, curr_thread):
+        trace_format = "{:6} {:8d} {:#10x} {:16} {:10} {:#10x} {:16}"
+        if prev_thread is None:
+            return trace_format.format(index,
+                                       time,
+                                       0,
+                                       "",
+                                       ChibiosThread.THREAD_STATE[state],
+                                       curr_thread.address,
+                                       curr_thread.name)
+        else:
+            return trace_format.format(index,
+                                       time,
+                                       prev_thread.address,
+                                       prev_thread.name,
+                                       ChibiosThread.THREAD_STATE[state],
+                                       curr_thread.address,
+                                       curr_thread.name)
+
     def invoke(self, args, from_tty):
-        # TODO take from args
-        count = 10
+        argv = gdb.string_to_argv(args)
+        if (len(argv) > 0):
+            count = int(argv[0])
+        else:
+            count = 10
 
         threads = chibios_get_threads()
 
         dbg_trace_buffer = gdb.parse_and_eval("dbg_trace_buffer")
 
         trace_buffer_size = int(dbg_trace_buffer['tb_size'])
+
+        if (count > trace_buffer_size):
+            count = trace_buffer_size
 
         trace_buffer = dbg_trace_buffer['tb_buffer']
 
@@ -286,38 +311,40 @@ class ChibiosTraceCommand(gdb.Command):
         for i in xrange(0, trace_start):
             traces.append(trace_buffer[i])
 
-        print("{:6} {:8} {:10} {:16} {:10} {:16}".format("Event",
-                                                         "Time",
-                                                         "Previous",
-                                                         "Name",
-                                                         "Current",
-                                                         "Name"))
+        print("{:>6} {:>8} {:10} {:16} {:10} {:10} {:16}".format("Event",
+                                                                "Time",
+                                                                "Previous",
+                                                                "Name",
+                                                                "State",
+                                                                "Current",
+                                                                "Name"))
 
         # Print oldest trace separately since we don't have previous
         # information
 
+        trace_lines = []
+
         thread = next((i for i in threads if
                        i.address == long(traces[0]['se_tp'])), None)
-        if thread is not None:
-            print("{:6} {:8d} {:10} {:16} {:#10x} {:16}".format(-63 + 0,
-                                                             int(traces[0]['se_time']),
-                                                             "",
-                                                             "",
-                                                             thread.address,
-                                                             thread.name))
+        trace_lines.append(self.trace_line(-63,
+                                           int(traces[0]['se_time']),
+                                           int(traces[0]['se_state']),
+                                           None,
+                                           thread))
 
         for j, event in enumerate(traces[1:], 1):
             curr_thread = next((i for i in threads if
                                 i.address == long(event['se_tp'])), None)
             prev_thread = next((i for i in threads if
                                 i.address == long(traces[j - 1]['se_tp'])), None)
-            print("{:6} {:8d} {:#10x} {:16} {:#10x} {:16}".format(-63 + j,
-                                                                int(event['se_time']),
-                                                                prev_thread.address,
-                                                                prev_thread.name,
-                                                                curr_thread.address,
-                                                                curr_thread.name))
+            trace_lines.append(self.trace_line(-63 + j,
+                                               int(event['se_time']),
+                                               int(event['se_state']),
+                                               prev_thread,
+                                               curr_thread))
 
+        for trace in trace_lines[-count:]:
+            print(trace)
 
 
 ChibiosPrefixCommand()
