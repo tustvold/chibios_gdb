@@ -7,6 +7,26 @@ class ChibiosPrefixCommand(gdb.Command):
                                                    gdb.COMPLETE_NONE,
                                                    True)
 
+
+# List of all information to print for threads
+#
+# Format is: <header_formatter> <header_title> <value_formatter>
+THREAD_INFO = [ ("{:10}", "Address", "{thread.address:#10x}"),
+                ("{:10}", "StkLimit", "{thread.stack_limit:#10x}"),
+                ("{:10}", "Stack", "{thread.stack_start:#10x}"),
+                ("{:>6}", "Free", "{thread.stack_unused:6}"),
+                ("{:>6}", "Total", "{thread.stack_size:6}"),
+                ("{:16}", "Name", "{thread.name:16}"),
+                ("{:10}", "State", "{thread.state_str}")]
+
+# Build the string for thread info header
+THREAD_INFO_HEADER_STRING = " ".join(each[0] for each in THREAD_INFO)
+THREAD_INFO_HEADER_DATA = [each[1] for each in THREAD_INFO]
+THREAD_INFO_HEADER_FORMAT = THREAD_INFO_HEADER_STRING.format(*THREAD_INFO_HEADER_DATA)
+
+# Build format string for thread info rows. 
+THREAD_INFO_FORMAT = " ".join(each[2] for each in THREAD_INFO)
+
 class ChibiosThread(object):
     """Class to model ChibiOS/RT thread"""
 
@@ -50,9 +70,11 @@ class ChibiosThread(object):
                 # Find the first non-'U' (0x55) element in the stack space. 
                 for i, each in enumerate(stack):
                     if (each != 'U'):
+                        self._stack_unused = i
                         break;
+                else:
+                    self._stack_unused = 0
 
-                self._stack_unused = i
             except gdb.MemoryError:
                 self._stack_unused = 0
 
@@ -61,9 +83,9 @@ class ChibiosThread(object):
             self._stack_unused = 0
 
 
-        self._address = thread.address
         
-    
+        self._address = thread.address
+
         if len(thread['p_name'].string()) > 0:
             self._name = thread['p_name'].string()
 
@@ -97,27 +119,31 @@ class ChibiosThread(object):
 
     @property
     def stack_size(self):
-        return self._stack_size
+        return long(self._stack_size)
 
     @property
     def stack_limit(self):
-        return self._stklimit
+        return long(self._stklimit)
 
     @property
     def stack_start(self):
-        return self._r13
+        return long(self._r13)
 
     @property
     def stack_unused(self):
-        return self._stack_unused
+        return long(self._stack_unused)
 
     @property
     def address(self):
-        return self._address
+        return long(self._address)
 
     @property
     def state(self):
         return self._state
+
+    @property
+    def state_str(self):
+        return ChibiosThread.THREAD_STATE[self.state]
 
     @property
     def flags(self):
@@ -131,17 +157,15 @@ class ChibiosThread(object):
     def time(self):
         return self._time
 
+import traceback
 
 class ChibiosThreadsCommand(gdb.Command):
-"""
-Print all the ChibiOS threads and their stack usage.
+    """Print all the ChibiOS threads and their stack usage.
 
-This will not work if ChibiOS was not compiled with, at a minumum,
-CH_USE_REGISTRY. Additionally, CH_DBG_ENABLE_STACK_CHECK and
-CH_DBG_FILL_THREADS are necessary to compute the used/free stack
-for each thread.
-"""
-    
+    This will not work if ChibiOS was not compiled with, at a minumum,
+    CH_USE_REGISTRY. Additionally, CH_DBG_ENABLE_STACK_CHECK and
+    CH_DBG_FILL_THREADS are necessary to compute the used/free stack
+    for each thread."""
     def __init__(self):
         super(ChibiosThreadsCommand, self).__init__("chibios threads",
                                                     gdb.COMMAND_SUPPORT,
@@ -157,23 +181,10 @@ for each thread.
         newer = rlist_as_thread.dereference()['p_newer']
         older = rlist_as_thread.dereference()['p_older']
 
-        print "%-10s %-10s %-10s %6s/%6s %-16s %s" % ("Address",
-                                                      "StkLimit",
-                                                      "Stack",
-                                                      "Free",
-                                                      "Total",
-                                                      "Name",
-                                                      "State")
+        print THREAD_INFO_HEADER_FORMAT
         while (newer != rlist_as_thread):
-
             ch_thread = ChibiosThread(newer.dereference())
-            print "0x%08x 0x%08x 0x%08x %6d/%6d %-16s %s" % (ch_thread.address,
-                                                             ch_thread.stack_limit,
-                                                             ch_thread.stack_start,
-                                                             ch_thread.stack_unused,
-                                                             ch_thread.stack_size,
-                                                             ch_thread.name,
-                                                             ChibiosThread.THREAD_STATE[ch_thread.state])
+            print THREAD_INFO_FORMAT.format(thread=ch_thread)
 
             current = newer
             newer = newer.dereference()['p_newer']
@@ -196,16 +207,11 @@ class ChibiosThreadCommand(gdb.Command):
             # inf.ptid is PID, LWID, TID; TID corresponds to the address in
             # memory of the Thread*.
             newer = thread.ptid[2]
-            print "%-10s %-10s %-10s %6s/%6s  %s" % ("Address", "StkLimit", "Stack", "Free", "Total", "Name")
+            print THREAD_INFO_HEADER_FORMAT
 
             thread_struct = gdb.parse_and_eval('(Thread *)%d' % (newer)).dereference()
             ch_thread = ChibiosThread(thread_struct)
-            print "0x%08x 0x%08x 0x%08x %6d/%6d  %s" % (ch_thread.address,
-                                                  ch_thread.stack_limit,
-                                                  ch_thread.stack_start,
-                                                  ch_thread.stack_unused,
-                                                  ch_thread.stack_size,
-                                                  ch_thread.name)
+            print THREAD_INFO_FORMAT.format(thread=ch_thread)
 
         else:
             print "No threads found--run info threads first"
