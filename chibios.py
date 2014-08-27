@@ -73,7 +73,8 @@ class ChibiosThread(object):
                         self._stack_unused = i
                         break;
                 else:
-                    self._stack_unused = 0
+                    # Everything is 'U', apparently. 
+                    self._stack_unused = self._stack_size
 
             except gdb.MemoryError:
                 self._stack_unused = 0
@@ -82,8 +83,6 @@ class ChibiosThread(object):
             self._stack_size = 0
             self._stack_unused = 0
 
-
-        
         self._address = thread.address
 
         if len(thread['p_name'].string()) > 0:
@@ -103,7 +102,7 @@ class ChibiosThread(object):
         thread_type = gdb.lookup_type('Thread')
 
         # Sanity checks on Thread
-        if 'p_newer' not in thread_type.keys() or 'p_older' not in thread_type.keys():
+        if not all(k in thread_type.keys() for k in ("p_newer", "p_older")):
             raise gdb.GdbError("ChibiOS/RT thread registry not enabled, cannot access thread information!")
             
         if 'p_stklimit' not in thread_type.keys():
