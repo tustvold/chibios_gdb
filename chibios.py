@@ -117,16 +117,16 @@ class ChibiosThread(object):
         # Sanity checks on Thread
         # From http://stackoverflow.com/questions/1285911/python-how-do-i-check-that-multiple-keys-are-in-a-dict-in-one-go
         if not all(k in thread_type.keys() for k in ("p_newer", "p_older")):
-            raise gdb.GdbError("ChibiOS/RT thread registry not enabled, cannot \
-            access thread information!")
+            raise gdb.GdbError("ChibiOS/RT thread registry not enabled, cannot"
+                               " access thread information!")
 
         if 'p_stklimit' not in thread_type.keys():
-            print("No p_stklimit in Thread struct; enable \
-            CH_DBG_ENABLE_STACK_CHECK")
+            print("No p_stklimit in Thread struct; enable"
+                  " CH_DBG_ENABLE_STACK_CHECK")
 
         if 'p_time' not in thread_type.keys():
-            print("No p_time in Thread struct; enable \
-            CH_DBG_THREADS_PROFILING")
+            print("No p_time in Thread struct; enable"
+                  " CH_DBG_THREADS_PROFILING")
 
     @property
     def name(self):
@@ -351,7 +351,32 @@ class ChibiosTraceCommand(gdb.Command):
             print(trace)
 
 
+class ChibiosInfoCommand(gdb.Command):
+    """Print information about ChibiOS/RT"""
+
+    def __init__(self):
+        super(ChibiosInfoCommand, self).__init__("chibios info",
+                                                 gdb.COMMAND_SUPPORT,
+                                                 gdb.COMPLETE_NONE)
+
+    def invoke(self, args, from_tty):
+        try:
+            ch_debug = gdb.parse_and_eval('ch_debug')
+        except gdb.error:
+            raise gdb.GdbError("Could not find ch_debug")
+
+        ch_version = int(ch_debug['ch_version'])
+        ch_major = (ch_version >> 11) & 0x1f
+        ch_minor = (ch_version >> 6) & 0x1f
+        ch_patch = (ch_version & 0x1f)
+
+        print("ChibiOS/RT version {}.{}.{}".format(ch_major,
+                                                   ch_minor,
+                                                   ch_patch))
+
+
 ChibiosPrefixCommand()
 ChibiosThreadsCommand()
 ChibiosThreadCommand()
 ChibiosTraceCommand()
+ChibiosInfoCommand()
