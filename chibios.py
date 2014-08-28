@@ -289,7 +289,11 @@ class ChibiosTraceCommand(gdb.Command):
 
         threads = chibios_get_threads()
 
-        dbg_trace_buffer = gdb.parse_and_eval("dbg_trace_buffer")
+        try:
+            dbg_trace_buffer = gdb.parse_and_eval("dbg_trace_buffer")
+        except gdb.error:
+            raise gdb.GdbError("Debug Trace Buffer not found. Compile with"
+                               " CH_DBG_ENABLE_TRACE")
 
         trace_buffer_size = int(dbg_trace_buffer['tb_size'])
 
@@ -312,17 +316,17 @@ class ChibiosTraceCommand(gdb.Command):
             traces.append(trace_buffer[i])
 
         print("{:>6} {:>8} {:10} {:16} {:10} {:10} {:16}".format("Event",
-                                                                "Time",
-                                                                "Previous",
-                                                                "Name",
-                                                                "State",
-                                                                "Current",
-                                                                "Name"))
+                                                                 "Time",
+                                                                 "Previous",
+                                                                 "Name",
+                                                                 "State",
+                                                                 "Current",
+                                                                 "Name"))
+
+        trace_lines = []
 
         # Print oldest trace separately since we don't have previous
         # information
-
-        trace_lines = []
 
         thread = next((i for i in threads if
                        i.address == long(traces[0]['se_tp'])), None)
