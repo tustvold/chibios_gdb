@@ -4,17 +4,14 @@ import gdb
 
 
 class ChibiosPrefixCommand(gdb.Command):
-    "Prefix for ChibiOS related helper commands"
-
+    """Prefix for ChibiOS related helper commands"""
     def __init__(self):
         super(ChibiosPrefixCommand, self).__init__("chibios",
                                                    gdb.COMMAND_SUPPORT,
                                                    gdb.COMPLETE_NONE,
                                                    True)
 
-
 # List of all information to print for threads
-#
 # Format is: <header_formatter> <header_title> <value_formatter>
 THREAD_INFO = [("{:10}", "Address", "{thread.address:#10x}"),
                ("{:10}", "StkLimit", "{thread.stack_limit:#10x}"),
@@ -35,7 +32,6 @@ THREAD_INFO = " ".join(each[2] for each in THREAD_INFO)
 
 class ChibiosThread(object):
     """Class to model ChibiOS/RT thread"""
-
     THREAD_STATE = ["READY", "CURRENT", "SUSPENDED", "WTSEM", "WTMTX",
                     "WTCOND", "SLEEPING", "WTEXIT", "WTOREVT",
                     "WTANDEVT", "SNDMSGQ", "SNDMSG", "WTMSG",
@@ -112,6 +108,9 @@ class ChibiosThread(object):
 
     @staticmethod
     def sanity_check():
+        """Check to see if ChibiOS/RT has been built with enough debug
+        information to read thread information.
+        """
         thread_type = gdb.lookup_type('Thread')
 
         # Sanity checks on Thread
@@ -227,7 +226,6 @@ class ChibiosThreadsCommand(gdb.Command):
 
 class ChibiosThreadCommand(gdb.Command):
     """Print information about the currently selected thread"""
-
     def __init__(self):
         super(ChibiosThreadCommand, self).__init__("chibios thread",
                                                    gdb.COMMAND_SUPPORT,
@@ -254,7 +252,7 @@ class ChibiosThreadCommand(gdb.Command):
 
 
 class ChibiosTraceCommand(gdb.Command):
-    """ Print the last entries in the trace buffer"""
+    """Print the last entries in the trace buffer"""
 
     def __init__(self):
         super(ChibiosTraceCommand, self).__init__("chibios trace",
@@ -262,6 +260,7 @@ class ChibiosTraceCommand(gdb.Command):
                                                   gdb.COMPLETE_NONE)
 
     def trace_line(self, index, time, state, prev_thread, curr_thread):
+        """Return a formatted string for a single trace"""
         trace_format = "{:6} {:8d} {:#10x} {:16} {:10} {:#10x} {:16}"
         if prev_thread is None:
             return trace_format.format(index,
@@ -327,7 +326,6 @@ class ChibiosTraceCommand(gdb.Command):
 
         # Print oldest trace separately since we don't have previous
         # information
-
         thread = next((i for i in threads if
                        i.address == long(traces[0]['se_tp'])), None)
         trace_lines.append(self.trace_line(-63,
@@ -353,7 +351,6 @@ class ChibiosTraceCommand(gdb.Command):
 
 class ChibiosInfoCommand(gdb.Command):
     """Print information about ChibiOS/RT"""
-
     def __init__(self):
         super(ChibiosInfoCommand, self).__init__("chibios info",
                                                  gdb.COMMAND_SUPPORT,
@@ -375,8 +372,44 @@ class ChibiosInfoCommand(gdb.Command):
                                                    ch_patch))
 
 
+class ChibiosTimersCommand(gdb.Command):
+    """Print current timers. Partially unimplemented"""
+    def __init__(self):
+        super(ChibiosTimersCommand, self).__init__("chibios timers",
+                                                   gdb.COMMAND_SUPPORT,
+                                                   gdb.COMPLETE_NONE)
+
+    def invoke(self, args, from_tty):
+        vtlist_p = gdb.parse_and_eval('&vtlist')
+
+        vtlist_as_timer = vtlist_p.cast(gdb.lookup_type("VirtualTimer").pointer())
+
+        vt_next = vtlist_as_timer.dereference()['vt_next']
+        vt_prev = vtlist_as_timer.dereference()['vt_prev']
+
+        print("{:6} {:10} {:10}".format("Time",
+                                        "Callback",
+                                        "Param"))
+
+        while (vt_next != vtlist_as_timer):
+            vt_time = int(vt_next.dereference()['vt_time'])
+            vt_func = long(vt_next.dereference()['vt_func'])
+            vt_par = long(vt_next.dereference()['vt_par'])
+            print("{:6} {:#10x} {:#10x}".format(vt_time,
+                                                vt_func,
+                                                vt_par))
+
+            current = vt_next
+            vt_next = vt_next.dereference()['vt_next']
+            vt_prev = vt_next.dereference()['vt_prev']
+
+            if (vt_prev != current):
+                raise gdb.GdbError('Rlist pointer invalid--corrupt list?')
+
+
 ChibiosPrefixCommand()
 ChibiosThreadsCommand()
 ChibiosThreadCommand()
 ChibiosTraceCommand()
 ChibiosInfoCommand()
+ChibiosTimersCommand()
