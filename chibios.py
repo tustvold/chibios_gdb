@@ -2,6 +2,8 @@ from __future__ import print_function
 
 import gdb
 
+try: long(0)
+except: long = int
 
 class ChibiosPrefixCommand(gdb.Command):
     """Prefix for ChibiOS related helper commands"""
@@ -102,7 +104,7 @@ class ChibiosThread(object):
         self._prio = thread['p_prio']
         self._refs = thread['p_refs']
 
-        # p_time is optional
+        # p_time is optional and is not available in tickless mode
         if 'p_time' in thread.type.keys():
             self._time = thread['p_time']
 
@@ -111,7 +113,7 @@ class ChibiosThread(object):
         """Check to see if ChibiOS/RT has been built with enough debug
         information to read thread information.
         """
-        thread_type = gdb.lookup_type('Thread')
+        thread_type = gdb.lookup_type('thread_t')
 
         # Sanity checks on Thread
         # From http://stackoverflow.com/questions/1285911/python-how-do-i-check-that-multiple-keys-are-in-a-dict-in-one-go
@@ -122,10 +124,6 @@ class ChibiosThread(object):
         if 'p_stklimit' not in thread_type.keys():
             print("No p_stklimit in Thread struct; enable"
                   " CH_DBG_ENABLE_STACK_CHECK")
-
-        if 'p_time' not in thread_type.keys():
-            print("No p_time in Thread struct; enable"
-                  " CH_DBG_THREADS_PROFILING")
 
     @property
     def name(self):
@@ -183,8 +181,8 @@ def chibios_get_threads():
     threads = []
 
     # Walk the thread registry
-    rlist_p = gdb.parse_and_eval('&rlist')
-    rlist_as_thread = rlist_p.cast(gdb.lookup_type('Thread').pointer())
+    rlist_p = gdb.parse_and_eval('&ch.rlist')
+    rlist_as_thread = rlist_p.cast(gdb.lookup_type('thread_t').pointer())
     newer = rlist_as_thread.dereference()['p_newer']
     older = rlist_as_thread.dereference()['p_older']
 
@@ -289,7 +287,7 @@ class ChibiosTraceCommand(gdb.Command):
         threads = chibios_get_threads()
 
         try:
-            dbg_trace_buffer = gdb.parse_and_eval("dbg_trace_buffer")
+            dbg_trace_buffer = gdb.parse_and_eval("ch.dbg.trace_buffer")
         except gdb.error:
             raise gdb.GdbError("Debug Trace Buffer not found. Compile with"
                                " CH_DBG_ENABLE_TRACE")
@@ -308,10 +306,10 @@ class ChibiosTraceCommand(gdb.Command):
 
         traces = []
 
-        for i in xrange(trace_start, trace_buffer_size):
+        for i in range(trace_start, trace_buffer_size):
             traces.append(trace_buffer[i])
 
-        for i in xrange(0, trace_start):
+        for i in range(0, trace_start):
             traces.append(trace_buffer[i])
 
         print("{:>6} {:>8} {:10} {:16} {:10} {:10} {:16}".format("Event",
@@ -372,6 +370,40 @@ class ChibiosInfoCommand(gdb.Command):
                                                    ch_patch))
 
 
+class ChibiosPanicCommand(gdb.Command):
+    """Print the current panic message."""
+
+    _ic = "called from ISR or critical zone"
+    _msgs = [("chSysDisable", _ic),
+             ("chSysSuspend", _ic),
+             ("chSysEnable", _ic),
+             ("chSysLock", _ic),
+             ("chSysUnlock", "called from ISR or not called from critical zone"),
+             ("chSysLockFromISR", "not called from ISR or called from critical zone"),
+             ("chSysUnlockFromISR", "not called from ISR or critical zone"),
+             ("CH_IRQ_PROLOGUE", "not called at ISR begin or called from critical zone"),
+             ("CH_IRQ_EPILOGUE", "CH_IRQ_PROLOGUE() missing, or not called at ISR end or " +
+                 "called from critical zone"),
+             ("I-class function", "not called from within a critical zone"),
+             ("S-class function", "not called from within a critical zone or called from ISR")]
+
+    def __init__(self):
+        super(ChibiosPanicCommand, self).__init__("chibios panic",
+                                                  gdb.COMMAND_SUPPORT,
+                                                  gdb.COMPLETE_NONE)
+
+    def invoke(self, args, from_tty):
+        try:
+            panic_msg = gdb.parse_and_eval('ch.dbg.panic_msg')
+        except gdb.error:
+            raise gdb.GdbError("Could not find ch.dbg.panic_msg")
+        msg = panic_msg.string()
+        if msg[:3] == "SV#":
+            (cause, explanation) = self._msgs[int(msg[3:])-1]
+            print("panic due to misplaced {}: {}".format(cause, explanation))
+        elif msg:
+            print("panic: {}".format(msg))
+
 class ChibiosTimersCommand(gdb.Command):
     """Print current timers. Partially unimplemented"""
     def __init__(self):
@@ -380,22 +412,22 @@ class ChibiosTimersCommand(gdb.Command):
                                                    gdb.COMPLETE_NONE)
 
     def invoke(self, args, from_tty):
-        vtlist_p = gdb.parse_and_eval('&vtlist')
+        vtlist_p = gdb.parse_and_eval('&ch.vtlist')
 
-        vtlist_as_timer = vtlist_p.cast(gdb.lookup_type("VirtualTimer").pointer())
+        vtlist_as_timer = vtlist_p.cast(gdb.lookup_type("virtual_timer_t").pointer())
 
         vt_next = vtlist_as_timer.dereference()['vt_next']
         vt_prev = vtlist_as_timer.dereference()['vt_prev']
 
-        print("{:6} {:10} {:10}".format("Time",
+        print("{:6} {:10} {:10}".format("Delta",
                                         "Callback",
                                         "Param"))
 
         while (vt_next != vtlist_as_timer):
-            vt_time = int(vt_next.dereference()['vt_time'])
+            vt_delta = int(vt_next.dereference()['vt_delta'])
             vt_func = long(vt_next.dereference()['vt_func'])
             vt_par = long(vt_next.dereference()['vt_par'])
-            print("{:6} {:#10x} {:#10x}".format(vt_time,
+            print("{:6} {:#10x} {:#10x}".format(vt_delta,
                                                 vt_func,
                                                 vt_par))
 
@@ -412,4 +444,5 @@ ChibiosThreadsCommand()
 ChibiosThreadCommand()
 ChibiosTraceCommand()
 ChibiosInfoCommand()
+ChibiosPanicCommand()
 ChibiosTimersCommand()
