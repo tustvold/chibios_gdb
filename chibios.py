@@ -96,7 +96,7 @@ class ChibiosThread(object):
 
         self._address = thread.address
 
-        if len(thread['p_name'].string()) > 0:
+        if str(thread['p_name']) != "0x0" and len(thread['p_name'].string()) > 0:
             self._name = thread['p_name'].string()
 
         self._state = int(thread['p_state'])
@@ -446,3 +446,4 @@ ChibiosTraceCommand()
 ChibiosInfoCommand()
 ChibiosPanicCommand()
 ChibiosTimersCommand()
+
